@@ -16,10 +16,16 @@
 
 import { neon } from '@neondatabase/serverless';
 
-// Connection string. The Vercel<->Neon integration injects DATABASE_URL, but we
-// accept the other common names too so a renamed var doesn't take the game down.
+// Connection string. The Vercel<->Neon integration injects DATABASE_URL, but the
+// names vary: a custom prefix may be set when connecting (here it's LEADERBOARD_),
+// so we check the prefixed names first, then the standard ones.
 function connString() {
   return (
+    process.env.LEADERBOARD_DATABASE_URL ||
+    process.env.LEADERBOARD_POSTGRES_URL ||
+    process.env.LEADERBOARD_DATABASE_URL_UNPOOLED ||
+    process.env.LEADERBOARD_POSTGRES_URL_NON_POOLING ||
+    process.env.LEADERBOARD_POSTGRES_PRISMA_URL ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.DATABASE_URL_UNPOOLED ||
