@@ -1,0 +1,13 @@
+{
+  "name": "mtoyota-rescue-run",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "mToyota Roadside Rescue — HTML5 endless runner with a Neon-backed leaderboard.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0"
+  }
+}
