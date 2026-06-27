@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Roadside Rescue — Player Admin</title>
+<style>
+  :root{
+    --bg:#0d1014; --panel:#161b22; --panel-2:#1c232c; --line:#28313c;
+    --ink:#e8edf2; --muted:#8b97a4; --faint:#5f6c79;
+    --red:#eb0a1e; --red-dim:#b00a18; --ok:#3fb950; --warn:#d29922;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .num{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
+  a{color:#58a6ff}
+
+  /* ---------- Login gate ---------- */
+  .gate{min-height:100dvh; display:grid; place-items:center; padding:24px}
+  .gate .card{
+    width:100%; max-width:380px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:28px;
+  }
+  .brand{display:flex; align-items:center; gap:10px; margin-bottom:6px}
+  .brand .mark{width:10px; height:10px; border-radius:50%; background:var(--red); box-shadow:0 0 0 4px rgba(235,10,30,.15)}
+  .brand h1{font-size:15px; letter-spacing:.04em; text-transform:uppercase; margin:0; font-weight:700}
+  .gate p{color:var(--muted); margin:.4em 0 1.4em; font-size:13.5px}
+  label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px; letter-spacing:.02em}
+  input[type=password],input[type=text]{
+    width:100%; background:var(--bg); border:1px solid var(--line); color:var(--ink);
+    border-radius:8px; padding:11px 12px; font-size:15px; outline:none;
+  }
+  input:focus{border-color:var(--red); box-shadow:0 0 0 3px rgba(235,10,30,.18)}
+  .btn{
+    appearance:none; border:1px solid var(--line); background:var(--panel-2); color:var(--ink);
+    border-radius:8px; padding:10px 14px; font-size:14px; cursor:pointer; font-weight:600;
+    display:inline-flex; align-items:center; gap:8px; transition:.12s;
+  }
+  .btn:hover{border-color:#3a4753}
+  .btn:focus-visible{outline:2px solid var(--red); outline-offset:2px}
+  .btn-primary{background:var(--red); border-color:var(--red); color:#fff; width:100%; justify-content:center; padding:12px; margin-top:16px}
+  .btn-primary:hover{background:var(--red-dim); border-color:var(--red-dim)}
+  .err{color:#ff7b72; font-size:13px; margin-top:12px; min-height:1.2em}
+
+  /* ---------- App ---------- */
+  .wrap{display:none; max-width:1180px; margin:0 auto; padding:20px 18px 64px}
+  .topbar{display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:6px 2px 18px; border-bottom:1px solid var(--line); margin-bottom:18px}
+  .topbar .brand h1{font-size:14px}
+  .spacer{flex:1}
+  .stats{display:flex; gap:22px; color:var(--muted); font-size:13px}
+  .stats b{color:var(--ink); font-size:15px; display:block}
+  .controls{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px}
+  .search{flex:1; min-width:200px; position:relative}
+  .search input{padding-left:34px}
+  .search svg{position:absolute; left:10px; top:50%; transform:translateY(-50%); opacity:.5}
+
+  .tablecard{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+  .scroll{overflow:auto; max-height:calc(100dvh - 280px)}
+  table{width:100%; border-collapse:collapse; font-size:14px}
+  thead th{
+    position:sticky; top:0; background:var(--panel-2); text-align:left; padding:11px 14px;
+    font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted);
+    border-bottom:1px solid var(--line); white-space:nowrap; cursor:pointer; user-select:none;
+  }
+  thead th.no-sort{cursor:default}
+  thead th .arrow{opacity:0; margin-left:5px; font-size:10px}
+  thead th.sorted .arrow{opacity:1}
+  tbody td{padding:11px 14px; border-bottom:1px solid var(--line); white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:#11161c}
+  .rank{color:var(--faint); width:42px}
+  .rank.top{color:var(--red); font-weight:700}
+  .name{font-weight:600}
+  .pii{color:var(--muted)}
+  .right{text-align:right}
+  .score{font-weight:700}
+  .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:var(--panel-2); border:1px solid var(--line); font-size:12px; color:var(--muted)}
+  .del{
+    border:1px solid transparent; background:transparent; color:var(--faint); cursor:pointer;
+    border-radius:7px; padding:6px 9px; font-size:13px; transition:.12s;
+  }
+  .del:hover{color:#fff; background:var(--red); }
+  .del:focus-visible{outline:2px solid var(--red); outline-offset:2px}
+
+  .empty{padding:48px 20px; text-align:center; color:var(--muted)}
+  .empty b{color:var(--ink); display:block; margin-bottom:4px}
+
+  /* Danger zone */
+  .danger{margin-top:22px; border:1px solid #3a1d20; background:#1a1012; border-radius:var(--radius); padding:16px 18px; display:flex; gap:16px; align-items:center; flex-wrap:wrap}
+  .danger .t{flex:1; min-width:220px}
+  .danger h3{margin:0 0 3px; font-size:13.5px; color:#ff9a9a}
+  .danger p{margin:0; font-size:12.5px; color:var(--muted)}
+  .btn-danger{background:transparent; border-color:var(--red-dim); color:#ff8a8a}
+  .btn-danger:hover{background:var(--red); border-color:var(--red); color:#fff}
+
+  .foot{margin-top:18px; color:var(--faint); font-size:12px; text-align:center}
+
+  /* Modal */
+  .modal-bg{display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); place-items:center; padding:20px; z-index:10}
+  .modal-bg.show{display:grid}
+  .modal{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; max-width:420px; width:100%}
+  .modal h3{margin:0 0 8px; font-size:16px}
+  .modal p{color:var(--muted); font-size:13.5px; margin:0 0 16px}
+  .modal .row{display:flex; gap:10px; justify-content:flex-end; margin-top:18px}
+  .toast{position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--panel-2); border:1px solid var(--line); color:var(--ink); padding:11px 16px; border-radius:9px; font-size:13.5px; opacity:0; transition:.2s; pointer-events:none; z-index:20}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  .toast.ok{border-color:var(--ok)} .toast.bad{border-color:var(--red)}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div class="gate" id="gate">
+  <div class="card">
+    <div class="brand"><span class="mark"></span><h1>Roadside Rescue</h1></div>
+    <p>Player admin. Enter your admin token to view and manage entries.</p>
+    <label for="tok">Admin token</label>
+    <input type="password" id="tok" placeholder="••••••••••••" autocomplete="current-password">
+    <button class="btn btn-primary" id="unlock">Unlock</button>
+    <div class="err" id="gateErr"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="wrap" id="app">
+  <div class="topbar">
+    <div class="brand"><span class="mark"></span><h1>Roadside Rescue — Players</h1></div>
+    <div class="spacer"></div>
+    <div class="stats">
+      <div><b id="stPlayers" class="num">0</b>players</div>
+      <div><b id="stTop" class="num">0</b>top score</div>
+      <div><b id="stPlays" class="num">0</b>total plays</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" id="search" placeholder="Search name, email, or phone…">
+    </div>
+    <button class="btn" id="refresh">↻ Refresh</button>
+    <button class="btn" id="csv">⬇ Download CSV</button>
+    <button class="btn" id="logout">Lock</button>
+  </div>
+
+  <div class="tablecard">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="no-sort">#</th>
+            <th data-k="name">Name<span class="arrow">▼</span></th>
+            <th data-k="email">Email<span class="arrow">▼</span></th>
+            <th data-k="phone">Phone<span class="arrow">▼</span></th>
+            <th data-k="score" class="right sorted">Score<span class="arrow">▼</span></th>
+            <th data-k="rescued" class="right">Rescued<span class="arrow">▼</span></th>
+            <th data-k="boosts" class="right">Boosts<span class="arrow">▼</span></th>
+            <th data-k="multiplier" class="right">Mult<span class="arrow">▼</span></th>
+            <th data-k="time_sec" class="right">Time<span class="arrow">▼</span></th>
+            <th data-k="plays" class="right">Plays<span class="arrow">▼</span></th>
+            <th data-k="created_at">Joined<span class="arrow">▼</span></th>
+            <th class="no-sort"></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" style="display:none"><b>No players yet</b>Scores will appear here as people play.</div>
+  </div>
+
+  <div class="danger">
+    <div class="t">
+      <h3>Clear all entries</h3>
+      <p>Permanently deletes every player record. This cannot be undone — export a CSV first if you might need the data.</p>
+    </div>
+    <button class="btn btn-danger" id="clearAll">Clear all data</button>
+  </div>
+
+  <div class="foot">mToyota Roadside Rescue · admin view · data served only with a valid token</div>
+</div>
+
+<!-- Delete-one modal -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3 id="mTitle">Delete player?</h3>
+    <p id="mText"></p>
+    <div id="mConfirmWrap" style="display:none">
+      <label for="mConfirm">Type <b style="color:#ff9a9a">DELETE ALL</b> to confirm</label>
+      <input type="text" id="mConfirm" placeholder="DELETE ALL">
+    </div>
+    <div class="row">
+      <button class="btn" id="mCancel">Cancel</button>
+      <button class="btn btn-danger" id="mOk">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/api/leaderboard';
+let TOKEN = '';
+let DATA = [];
+let sortKey = 'score', sortDir = -1;   // -1 desc, 1 asc
+let pendingAction = null;
+
+const $ = s => document.querySelector(s);
+const gate = $('#gate'), app = $('#app');
+
+// ---- session persistence (per-tab only) ----
+const saved = sessionStorage.getItem('rr_admin_token');
+if (saved) { TOKEN = saved; tryLoad(true); }
+
+$('#unlock').addEventListener('click', () => { TOKEN = $('#tok').value.trim(); tryLoad(false); });
+$('#tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('#unlock').click(); });
+
+async function tryLoad(silent){
+  if (!TOKEN){ $('#gateErr').textContent = 'Enter your token.'; return; }
+  $('#gateErr').textContent = silent ? '' : 'Checking…';
+  try{
+    const res = await fetch(API + '?full=1', { headers: { 'x-admin-token': TOKEN } });
+    if (res.status === 401){ fail('That token was rejected.'); return; }
+    if (!res.ok){ fail('Server error (' + res.status + '). Try again.'); return; }
+    const j = await res.json();
+    DATA = j.players || [];
+    sessionStorage.setItem('rr_admin_token', TOKEN);
+    gate.style.display = 'none';
+    app.style.display = 'block';
+    render();
+  }catch(e){ fail('Network error. Check your connection.'); }
+}
+function fail(msg){
+  sessionStorage.removeItem('rr_admin_token');
+  if (app.style.display === 'block'){ toast(msg, 'bad'); }
+  else { $('#gateErr').textContent = msg; }
+}
+
+function fmtTime(s){
+  s = Math.round(Number(s)||0);
+  const m = Math.floor(s/60), r = s%60;
+  return m + ':' + String(r).padStart(2,'0');
+}
+function fmtDate(d){
+  if(!d) return '—';
+  const dt = new Date(d);
+  return dt.toLocaleDateString(undefined,{year:'2-digit',month:'short',day:'numeric'}) +
+         ' ' + dt.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(){
+  const q = $('#search').value.trim().toLowerCase();
+  let rows = DATA.filter(r => !q ||
+    (r.name||'').toLowerCase().includes(q) ||
+    (r.email||'').toLowerCase().includes(q) ||
+    (r.phone||'').toLowerCase().includes(q));
+
+  rows.sort((a,b)=>{
+    let x=a[sortKey], y=b[sortKey];
+    if(sortKey==='created_at'){ x=new Date(x).getTime(); y=new Date(y).getTime(); }
+    if(typeof x==='string'){ x=x.toLowerCase(); y=(y||'').toLowerCase(); }
+    if(x<y) return -1*sortDir; if(x>y) return 1*sortDir; return 0;
+  });
+
+  // stats (over full dataset, not filtered)
+  $('#stPlayers').textContent = DATA.length;
+  $('#stTop').textContent = DATA.length ? Math.max(...DATA.map(r=>+r.score||0)).toLocaleString() : '0';
+  $('#stPlays').textContent = DATA.reduce((s,r)=>s+(+r.plays||0),0);
+
+  const tb = $('#rows');
+  $('#empty').style.display = rows.length ? 'none' : 'block';
+  tb.innerHTML = rows.map((r,i)=>`
+    <tr>
+      <td class="rank num ${i<3?'top':''}">${i+1}</td>
+      <td class="name">${esc(r.name)}</td>
+      <td class="pii">${esc(r.email)}</td>
+      <td class="pii num">${esc(r.phone)}</td>
+      <td class="right score num">${(+r.score).toLocaleString()}</td>
+      <td class="right num">${esc(r.rescued)}</td>
+      <td class="right num">${esc(r.boosts)}</td>
+      <td class="right num">${(+r.multiplier).toFixed(1)}×</td>
+      <td class="right num">${fmtTime(r.time_sec)}</td>
+      <td class="right num"><span class="pill">${esc(r.plays)}</span></td>
+      <td class="pii num">${fmtDate(r.created_at)}</td>
+      <td class="right"><button class="del" data-id="${esc(r.identity)}" data-name="${esc(r.name)}">Delete</button></td>
+    </tr>`).join('');
+
+  tb.querySelectorAll('.del').forEach(b=>b.addEventListener('click',()=>askDeleteOne(b.dataset.id, b.dataset.name)));
+
+  document.querySelectorAll('thead th[data-k]').forEach(th=>{
+    th.classList.toggle('sorted', th.dataset.k===sortKey);
+    const ar = th.querySelector('.arrow'); if(ar) ar.textContent = sortDir<0?'▼':'▲';
+  });
+}
+
+// sorting
+document.querySelectorAll('thead th[data-k]').forEach(th=>{
+  th.addEventListener('click',()=>{
+    const k=th.dataset.k;
+    if(k===sortKey){ sortDir*=-1; }
+    else { sortKey=k; sortDir = (k==='name'||k==='email'||k==='phone') ? 1 : -1; }
+    render();
+  });
+});
+$('#search').addEventListener('input', render);
+$('#refresh').addEventListener('click', ()=>tryLoad(true));
+$('#logout').addEventListener('click', ()=>{
+  TOKEN=''; sessionStorage.removeItem('rr_admin_token');
+  app.style.display='none'; gate.style.display='grid'; $('#tok').value=''; $('#gateErr').textContent='';
+});
+
+// CSV — fetch with header then download (keeps token out of the URL bar)
+$('#csv').addEventListener('click', async ()=>{
+  try{
+    const res = await fetch(API + '?full=1&format=csv', { headers:{ 'x-admin-token': TOKEN } });
+    if(!res.ok){ toast('Could not export ('+res.status+').','bad'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download='mtoyota-players.csv'; a.click();
+    URL.revokeObjectURL(url);
+    toast('CSV downloaded.','ok');
+  }catch(e){ toast('Network error during export.','bad'); }
+});
+
+// ---- delete flows ----
+const modal=$('#modal');
+function openModal(){ modal.classList.add('show'); }
+function closeModal(){ modal.classList.remove('show'); pendingAction=null; $('#mConfirmWrap').style.display='none'; $('#mConfirm').value=''; }
+$('#mCancel').addEventListener('click', closeModal);
+modal.addEventListener('click', e=>{ if(e.target===modal) closeModal(); });
+
+function askDeleteOne(identity, name){
+  $('#mTitle').textContent = 'Delete this player?';
+  $('#mText').innerHTML = 'This removes <b>'+esc(name)+'</b> and their score permanently. This cannot be undone.';
+  $('#mConfirmWrap').style.display='none';
+  pendingAction = ()=>doDelete({ identity });
+  openModal();
+}
+$('#clearAll').addEventListener('click', ()=>{
+  $('#mTitle').textContent = 'Clear ALL player data?';
+  $('#mText').innerHTML = 'This permanently deletes <b>all '+DATA.length+' records</b>. Export a CSV first if you might need them.';
+  $('#mConfirmWrap').style.display='block';
+  pendingAction = ()=>{
+    if($('#mConfirm').value.trim()!=='DELETE ALL'){ toast('Type DELETE ALL to confirm.','bad'); return false; }
+    return doDelete({ all:true });
+  };
+  openModal();
+});
+$('#mOk').addEventListener('click', ()=>{ if(pendingAction) pendingAction(); });
+
+async function doDelete(payload){
+  try{
+    const res = await fetch(API, {
+      method:'DELETE',
+      headers:{ 'content-type':'application/json', 'x-admin-token':TOKEN },
+      body: JSON.stringify(payload)
+    });
+    if(res.status===401){ toast('Token rejected.','bad'); return; }
+    if(!res.ok){ toast('Delete failed ('+res.status+').','bad'); return; }
+    closeModal();
+    toast(payload.all ? 'All records cleared.' : 'Player deleted.','ok');
+    tryLoad(true);
+  }catch(e){ toast('Network error.','bad'); }
+}
+
+// toast
+let toastT;
+function toast(msg,kind){
+  const t=$('#toast'); t.textContent=msg; t.className='toast show '+(kind||'');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.className='toast',2600);
+}
+</script>
+</body>
+</html>
