@@ -88,8 +88,8 @@ function clean(s, max) { return String(s == null ? '' : s).replace(/[\u0000-\u00
 function setCors(res) {
   // Public board + writes. Tighten the origin if you only embed from one domain.
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type, accept');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, accept, x-admin-token');
 }
 
 function readBody(req) {
@@ -128,11 +128,12 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const q = req.query || {};
       const adminToken = process.env.ADMIN_TOKEN;
+      const givenToken = q.admin || req.headers['x-admin-token'];
 
       // Admin export (PII) — requires the secret token.
-      if (q.full && adminToken && q.admin === adminToken) {
+      if (q.full && adminToken && givenToken === adminToken) {
         const rows = await db()`
-          SELECT name, email, phone, score, rescued, boosts, multiplier,
+          SELECT identity, name, email, phone, score, rescued, boosts, multiplier,
                  time_sec, plays, created_at, updated_at
           FROM players ORDER BY score DESC`;
         if (q.format === 'csv') {
@@ -149,7 +150,7 @@ export default async function handler(req, res) {
         res.status(200).json({ count: rows.length, players: rows });
         return;
       }
-      if (q.full && (!adminToken || q.admin !== adminToken)) {
+      if (q.full && (!adminToken || givenToken !== adminToken)) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }
@@ -225,7 +226,40 @@ export default async function handler(req, res) {
       return;
     }
 
-    res.setHeader('Allow', 'GET, POST, OPTIONS');
+    // ---------------- DELETE ----------------
+    // Admin-only. Token via ?admin=, x-admin-token header, or JSON body { token }.
+    //   DELETE /api/leaderboard?admin=TOKEN&identity=<id>   -> remove one player
+    //   DELETE /api/leaderboard?admin=TOKEN&all=1           -> remove ALL players
+    if (req.method === 'DELETE') {
+      const q = req.query || {};
+      const body = readBody(req);
+      const adminToken = process.env.ADMIN_TOKEN;
+      const given = q.admin || req.headers['x-admin-token'] || body.token;
+
+      if (!adminToken || given !== adminToken) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const identity = q.identity || body.identity;
+      const wipeAll  = q.all === '1' || body.all === true;
+
+      if (wipeAll) {
+        await db()`DELETE FROM players`;
+        res.status(200).json({ ok: true, deleted: 'all' });
+        return;
+      }
+      if (identity) {
+        const r = await db()`DELETE FROM players WHERE identity = ${identity}`;
+        const n = (r && (r.count ?? r.rowCount)) || 0;
+        res.status(200).json({ ok: true, deleted: n });
+        return;
+      }
+      res.status(400).json({ error: 'Provide identity, or all=1 to clear everything.' });
+      return;
+    }
+
+    res.setHeader('Allow', 'GET, POST, DELETE, OPTIONS');
     res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
     console.error('leaderboard error:', err);
