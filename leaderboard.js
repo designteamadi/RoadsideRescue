@@ -16,7 +16,33 @@
 
 import { neon } from '@neondatabase/serverless';
 
-const sql = neon(process.env.DATABASE_URL);
+// Connection string. The Vercel<->Neon integration injects DATABASE_URL, but the
+// names vary: a custom prefix may be set when connecting (here it's LEADERBOARD_),
+// so we check the prefixed names first, then the standard ones.
+function connString() {
+  return (
+    process.env.LEADERBOARD_DATABASE_URL ||
+    process.env.LEADERBOARD_POSTGRES_URL ||
+    process.env.LEADERBOARD_DATABASE_URL_UNPOOLED ||
+    process.env.LEADERBOARD_POSTGRES_URL_NON_POOLING ||
+    process.env.LEADERBOARD_POSTGRES_PRISMA_URL ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    process.env.POSTGRES_PRISMA_URL ||
+    ''
+  );
+}
+
+// Lazily create the client INSIDE the request, never at import time. If the var
+// is missing, neon() would throw on load and crash every request before our
+// error guard runs — this defers it so we can return a clean JSON message.
+let _sql;
+function db() {
+  if (!_sql) _sql = neon(connString());
+  return _sql;
+}
 
 const PUBLIC_LIMIT = 100;     // max rows returned on the public board
 const MAX_NAME = 40;
@@ -27,7 +53,7 @@ let schemaReady;
 function ensureSchema() {
   if (!schemaReady) {
     schemaReady = (async () => {
-      await sql`
+      await db()`
         CREATE TABLE IF NOT EXISTS players (
           identity   TEXT PRIMARY KEY,
           name       TEXT NOT NULL,
@@ -45,8 +71,8 @@ function ensureSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )`;
       // Guarantees "no two players with the same score".
-      await sql`CREATE UNIQUE INDEX IF NOT EXISTS players_score_uniq ON players (score)`;
-      await sql`CREATE INDEX IF NOT EXISTS players_score_desc ON players (score DESC)`;
+      await db()`CREATE UNIQUE INDEX IF NOT EXISTS players_score_uniq ON players (score)`;
+      await db()`CREATE INDEX IF NOT EXISTS players_score_desc ON players (score DESC)`;
     })();
   }
   return schemaReady;
@@ -55,15 +81,56 @@ function ensureSchema() {
 // ---- helpers ------------------------------------------------------------
 function normEmail(s) { return String(s || '').trim().toLowerCase(); }
 function normPhone(s) { return String(s || '').replace(/\D/g, ''); }
-function identityOf(email, phone) { return normPhone(phone) + '|' + normEmail(email); }
+function identityOf(email, phone) { return canonPhone(phone) + '|' + normEmail(email); }
 function isEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s); }
 function clean(s, max) { return String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, '').trim().slice(0, max); }
+
+// ---- "real input" validation (authoritative; mirrors the client) ----
+const DISPOSABLE_DOMAINS = new Set(['mailinator.com','guerrillamail.com','guerrillamail.info','10minutemail.com','tempmail.com','temp-mail.org','yopmail.com','trashmail.com','sharklasers.com','getnada.com','nada.email','maildrop.cc','dispostable.com','fakeinbox.com','throwawaymail.com','mailnesia.com','mintemail.com','tempr.email','moakt.com','emailondeck.com','spam4.me','grr.la','mohmal.com','tempinbox.com','mailcatch.com','33mail.com','inboxbear.com','vomoto.com','tmail.com','tmpmail.org']);
+const TYPO_DOMAINS = { 'gmail.con':'gmail.com','gmail.co':'gmail.com','gmail.cm':'gmail.com','gmial.com':'gmail.com','gmal.com':'gmail.com','gmai.com':'gmail.com','gmaill.com':'gmail.com','gnail.com':'gmail.com','gmail.comm':'gmail.com','hotmial.com':'hotmail.com','hotmai.com':'hotmail.com','hotmal.com':'hotmail.com','hotmail.co':'hotmail.com','yaho.com':'yahoo.com','yahooo.com':'yahoo.com','yhaoo.com':'yahoo.com','yahoo.co':'yahoo.com','outlok.com':'outlook.com','outloo.com':'outlook.com','iclud.com':'icloud.com','icloud.co':'icloud.com' };
+
+function checkEmail(raw) {
+  const email = normEmail(raw);
+  if (!email) return { ok: false, reason: 'Email is required.' };
+  const m = email.match(/^([a-z0-9.!#$%&'*+/=?^_`{|}~-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24})$/);
+  if (!m) return { ok: false, reason: 'That email is not valid.' };
+  const local = m[1], domain = m[2];
+  if (local.length > 64 || local.includes('..') || local[0] === '.' || local.endsWith('.'))
+    return { ok: false, reason: 'That email is not valid.' };
+  if (domain.includes('..')) return { ok: false, reason: 'That email is not valid.' };
+  if (TYPO_DOMAINS[domain]) return { ok: false, reason: 'Did you mean @' + TYPO_DOMAINS[domain] + '?' };
+  if (DISPOSABLE_DOMAINS.has(domain)) return { ok: false, reason: 'Temporary email addresses are not allowed.' };
+  if (email === 'you@email.com' || domain === 'example.com' || domain === 'test.com')
+    return { ok: false, reason: 'Please use your real email.' };
+  return { ok: true, value: email };
+}
+
+// Canonical Indonesian mobile in national 08-form, or '' if implausible.
+function canonPhone(raw) {
+  let d = normPhone(raw);
+  if (!d) return '';
+  if (d.startsWith('0')) d = '62' + d.slice(1);
+  else if (d.startsWith('62')) { /* national E.164 */ }
+  else if (d.startsWith('8')) d = '62' + d;
+  else return '';
+  if (!/^628\d{8,11}$/.test(d)) return '';
+  return '0' + d.slice(2);
+}
+function checkPhone(raw) {
+  const local = canonPhone(raw);
+  if (!local) return { ok: false, reason: 'Enter a valid Indonesian mobile number (08…).' };
+  const nsn = local.slice(1);                 // 8XXXXXXXX
+  if (!/^8[1235789]/.test(nsn)) return { ok: false, reason: 'That is not a valid mobile prefix.' };
+  if (/^(\d)\1+$/.test(nsn) || /^(\d)\1+$/.test(nsn.slice(1)) || /1234567890|0987654321/.test(nsn))
+    return { ok: false, reason: 'Please enter a real phone number.' };
+  return { ok: true, value: local };
+}
 
 function setCors(res) {
   // Public board + writes. Tighten the origin if you only embed from one domain.
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type, accept');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, accept, x-admin-token');
 }
 
 function readBody(req) {
@@ -76,7 +143,7 @@ function readBody(req) {
 async function freeScore(want, identity) {
   let s = Math.max(0, Math.floor(want));
   for (let guard = 0; guard < 100000 && s >= 0; guard++) {
-    const clash = await sql`SELECT identity FROM players WHERE score = ${s} LIMIT 1`;
+    const clash = await db()`SELECT identity FROM players WHERE score = ${s} LIMIT 1`;
     if (clash.length === 0 || clash[0].identity === identity) return s;
     s -= 1;
   }
@@ -88,8 +155,10 @@ export default async function handler(req, res) {
   setCors(res);
   if (req.method === 'OPTIONS') { res.status(204).end(); return; }
 
-  if (!process.env.DATABASE_URL) {
-    res.status(500).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!connString()) {
+    res.status(500).json({
+      error: 'No database connection string found. Connect a Neon database to this Vercel project (Storage tab) and redeploy so DATABASE_URL is injected.'
+    });
     return;
   }
 
@@ -100,11 +169,12 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const q = req.query || {};
       const adminToken = process.env.ADMIN_TOKEN;
+      const givenToken = q.admin || req.headers['x-admin-token'];
 
       // Admin export (PII) — requires the secret token.
-      if (q.full && adminToken && q.admin === adminToken) {
-        const rows = await sql`
-          SELECT name, email, phone, score, rescued, boosts, multiplier,
+      if (q.full && adminToken && givenToken === adminToken) {
+        const rows = await db()`
+          SELECT identity, name, email, phone, score, rescued, boosts, multiplier,
                  time_sec, plays, created_at, updated_at
           FROM players ORDER BY score DESC`;
         if (q.format === 'csv') {
@@ -121,14 +191,14 @@ export default async function handler(req, res) {
         res.status(200).json({ count: rows.length, players: rows });
         return;
       }
-      if (q.full && (!adminToken || q.admin !== adminToken)) {
+      if (q.full && (!adminToken || givenToken !== adminToken)) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }
 
       // Public board: name + score only (no PII).
       const limit = Math.min(PUBLIC_LIMIT, Math.max(1, parseInt(q.limit, 10) || 50));
-      const rows = await sql`SELECT name, score FROM players ORDER BY score DESC LIMIT ${limit}`;
+      const rows = await db()`SELECT name, score FROM players ORDER BY score DESC LIMIT ${limit}`;
       res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=30');
       res.status(200).json({ leaderboard: rows });
       return;
@@ -139,15 +209,19 @@ export default async function handler(req, res) {
       const b = readBody(req);
 
       const name  = clean(b.name, MAX_NAME);
-      const email = normEmail(b.email);
-      const phone = normPhone(b.phone);
       let   score = Math.floor(Number(b.score));
 
+      const eRes = checkEmail(b.email);
+      const pRes = checkPhone(b.phone);
+
       if (!name)                       { res.status(400).json({ error: 'Name is required.' }); return; }
-      if (!isEmail(email))             { res.status(400).json({ error: 'A valid email is required.' }); return; }
-      if (phone.length < 8)            { res.status(400).json({ error: 'A valid phone number is required.' }); return; }
+      if (!eRes.ok)                    { res.status(400).json({ error: eRes.reason }); return; }
+      if (!pRes.ok)                    { res.status(400).json({ error: pRes.reason }); return; }
       if (!Number.isFinite(score) || score < 0) { res.status(400).json({ error: 'Invalid score.' }); return; }
       if (b.consent !== true)          { res.status(400).json({ error: 'Consent is required.' }); return; }
+
+      const email = eRes.value;        // normalized
+      const phone = pRes.value;        // canonical 08-form
 
       // Basic anti-cheat clamp. Tune to match your scoring if needed.
       const rescued    = Math.max(0, Math.floor(Number(b.rescued) || 0));
@@ -162,14 +236,14 @@ export default async function handler(req, res) {
       const ipRaw = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
       const ipHint = ipRaw ? ipRaw.replace(/\.\d+$/, '.x').replace(/:[^:]+$/, ':x') : null; // coarse, privacy-friendly
 
-      const existing = await sql`SELECT score FROM players WHERE identity = ${identity} LIMIT 1`;
+      const existing = await db()`SELECT score FROM players WHERE identity = ${identity} LIMIT 1`;
       const prevBest = existing.length ? existing[0].score : null;
       const isNewBest = prevBest == null || score > prevBest;
 
       if (isNewBest) {
         const finalScore = await freeScore(score, identity);
         // Upsert, keeping the higher score and bumping the play counter.
-        await sql`
+        await db()`
           INSERT INTO players
             (identity, name, email, phone, score, rescued, boosts, multiplier, time_sec, plays, user_agent, ip_hint)
           VALUES
@@ -180,27 +254,60 @@ export default async function handler(req, res) {
             plays=players.plays+1, user_agent=${ua}, ip_hint=${ipHint}, updated_at=now()`;
       } else {
         // Not a personal best — just record that they played again.
-        await sql`UPDATE players SET plays=plays+1, name=${name}, updated_at=now() WHERE identity=${identity}`;
+        await db()`UPDATE players SET plays=plays+1, name=${name}, updated_at=now() WHERE identity=${identity}`;
       }
 
-      const meRow = await sql`SELECT score FROM players WHERE identity=${identity} LIMIT 1`;
+      const meRow = await db()`SELECT score FROM players WHERE identity=${identity} LIMIT 1`;
       const best = meRow.length ? meRow[0].score : score;
-      const aboveRows = await sql`SELECT count(*)::int AS n FROM players WHERE score > ${best}`;
-      const totalRows = await sql`SELECT count(*)::int AS n FROM players`;
+      const aboveRows = await db()`SELECT count(*)::int AS n FROM players WHERE score > ${best}`;
+      const totalRows = await db()`SELECT count(*)::int AS n FROM players`;
       const rank  = (aboveRows[0]?.n ?? 0) + 1;
       const total = totalRows[0]?.n ?? 1;
 
-      const board = await sql`SELECT identity, name, score FROM players ORDER BY score DESC LIMIT ${PUBLIC_LIMIT}`;
+      const board = await db()`SELECT identity, name, score FROM players ORDER BY score DESC LIMIT ${PUBLIC_LIMIT}`;
       const leaderboard = board.map(r => ({ name: r.name, score: r.score, me: r.identity === identity || undefined }));
 
       res.status(200).json({ ok: true, newBest: isNewBest, rank, total, best, leaderboard });
       return;
     }
 
-    res.setHeader('Allow', 'GET, POST, OPTIONS');
+    // ---------------- DELETE ----------------
+    // Admin-only. Token via ?admin=, x-admin-token header, or JSON body { token }.
+    //   DELETE /api/leaderboard?admin=TOKEN&identity=<id>   -> remove one player
+    //   DELETE /api/leaderboard?admin=TOKEN&all=1           -> remove ALL players
+    if (req.method === 'DELETE') {
+      const q = req.query || {};
+      const body = readBody(req);
+      const adminToken = process.env.ADMIN_TOKEN;
+      const given = q.admin || req.headers['x-admin-token'] || body.token;
+
+      if (!adminToken || given !== adminToken) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const identity = q.identity || body.identity;
+      const wipeAll  = q.all === '1' || body.all === true;
+
+      if (wipeAll) {
+        await db()`DELETE FROM players`;
+        res.status(200).json({ ok: true, deleted: 'all' });
+        return;
+      }
+      if (identity) {
+        const r = await db()`DELETE FROM players WHERE identity = ${identity}`;
+        const n = (r && (r.count ?? r.rowCount)) || 0;
+        res.status(200).json({ ok: true, deleted: n });
+        return;
+      }
+      res.status(400).json({ error: 'Provide identity, or all=1 to clear everything.' });
+      return;
+    }
+
+    res.setHeader('Allow', 'GET, POST, DELETE, OPTIONS');
     res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
     console.error('leaderboard error:', err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Server error', detail: String(err && err.message || err) });
   }
 }
